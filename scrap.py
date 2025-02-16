@@ -14,7 +14,7 @@ import re
 
 # Configuration constants
 CHROME_DRIVER_PATH = r"C:\Windows\chromedriver-win64\chromedriver.exe"
-SEARCH_QUERY = "smartphone"
+SEARCH_QUERY = "bed+and+bath"
 BASE_URL = f"https://www.amazon.in/s?k={SEARCH_QUERY}"
 NUM_PRODUCTS = 100
 MAX_THREADS = 50
@@ -25,13 +25,14 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:130.0) Gecko/20100101 Firefox/130.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 ]
-CSV_FILE = "amazon_scraped_data.csv"
+CSV_FILE = "data.csv"
 
 def log(message):
-    print(f"[LOG] {message}")
+    """Logs a message to the console with a timestamp."""
+    print(f":: {message}")
 
 def setup_selenium():
-    """Sets up and returns a Selenium WebDriver instance."""
+    """Sets up and returns a Selenium WebDriver instance with a random user agent."""
     log("Initializing Selenium WebDriver...")
     chrome_options = Options()
     chrome_options.add_argument("--headless")
@@ -47,14 +48,14 @@ def get_product_links(driver, base_url, num_products):
     page = 1
     while len(product_links) < num_products:
         url = f"{base_url}&page={page}"
-        log(f"Opening page {page}: {url}")
+        log(f"🌐 Opening page {page}: {url}")
         driver.get(url)
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "a.a-link-normal.s-no-outline"))
             )
-        except:
-            log(f"⚠️ Skipping page {page} due to loading issues.")
+        except Exception as e:
+            log(f"⚠️ Skipping page {page} due to loading issues: {e}")
             break
         soup = BeautifulSoup(driver.page_source, "lxml")
         for a in soup.select("a.a-link-normal.s-no-outline"):
@@ -65,7 +66,7 @@ def get_product_links(driver, base_url, num_products):
                     asin = asin_match.group(1)
                     actual_product_url = f"https://www.amazon.in/dp/{asin}"
                     product_links.add(actual_product_url)
-        log(f"✅ Found {len(product_links)} total products so far.")
+        log(f" └── Found {len(product_links)} total products so far.")
         if len(product_links) >= num_products:
             break
         page += 1
@@ -74,7 +75,7 @@ def get_product_links(driver, base_url, num_products):
 
 def scrape_product(url, session):
     """Scrapes product data from a given URL."""
-    log(f"Scraping: {url}")
+    log(f"🔍 Scraping: {url}")
     for attempt in range(3):
         try:
             headers = {"User-Agent": random.choice(USER_AGENTS)}
@@ -90,13 +91,32 @@ def scrape_product(url, session):
             reviews = prod_soup.select_one("#acrCustomerReviewText").get_text(strip=True) if prod_soup.select_one("#acrCustomerReviewText") else "0 reviews"
             availability = prod_soup.select_one("#availability span").get_text(strip=True) if prod_soup.select_one("#availability span") else "N/A"
 
-            log(f"✓ Scraped: {title[:50]}... (Price: {price}, Rating: {rating}, Reviews: {reviews})")
+            # Extract Category and Subcategory
+            category = prod_soup.find("div", {"id": "wayfinding-breadcrumbs_feature_div"})
+            if category:
+                breadcrumbs = category.find_all("a")
+                if len(breadcrumbs) >= 2:
+                    category = breadcrumbs[-2].get_text(strip=True)
+                    subcategory = breadcrumbs[-1].get_text(strip=True)
+                elif len(breadcrumbs) == 1:
+                    category = breadcrumbs[0].get_text(strip=True)
+                    subcategory = "N/A"
+                else:
+                    category = "N/A"
+                    subcategory = "N/A"
+            else:
+                category = "N/A"
+                subcategory = "N/A"
+
+            log(f"📜 Scraped: {title[:50]}... (Price: {price}, Rating: {rating}, Reviews: {reviews})")
             return {
-                "Title": title,
                 "URL": url,
+                "Title": title,
+                "Category": category,
+                "Subcategory": subcategory,
                 "Price": price,
                 "Rating": rating,
-                "Reviews": reviews,
+                "Rating Count": reviews,
                 "Availability": availability
             }
         except requests.exceptions.RequestException as e:
@@ -105,6 +125,7 @@ def scrape_product(url, session):
     return None
 
 def main():
+    """Main function to orchestrate the scraping process."""
     log("Starting the scraping process...")
     driver = setup_selenium()
     product_links = get_product_links(driver, BASE_URL, NUM_PRODUCTS)
@@ -114,10 +135,10 @@ def main():
         results = list(executor.map(lambda url: scrape_product(url, session), product_links))
     scraped_data = [data for data in results if data]
     with open(CSV_FILE, "w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=["Title", "URL", "Price", "Rating", "Reviews", "Availability"])
+        writer = csv.DictWriter(file, fieldnames=["URL", "Title", "Category", "Subcategory", "Price", "Rating", "Rating Count", "Availability"])
         writer.writeheader()
         writer.writerows(scraped_data)
-    log(f"✅ Scraping complete! Data saved to {CSV_FILE}.")
+    log(f"\n🎉 Scraping complete! Data saved to {CSV_FILE}.")
 
 if __name__ == "__main__":
     main()
